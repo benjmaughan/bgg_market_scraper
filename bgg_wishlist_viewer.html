@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Wishlist Price Finder</title>
+<style>
+  :root {
+    --ink: #2b2a28; --paper: #f6f3ec; --line: #d8d2c4;
+    --accent: #6b4423; --accent2: #8a9a5b;
+    --mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
+    --serif: 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--serif); padding: 32px 24px 80px; }
+  h1 { font-size: 28px; letter-spacing: 0.02em; margin: 0 0 4px; border-bottom: 3px solid var(--ink); padding-bottom: 10px; }
+  .sub { font-family: var(--mono); font-size: 12px; color: #6b6558; margin: 0 0 24px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .panel { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-end; background: #fff; border: 1px solid var(--line); padding: 16px 18px; margin-bottom: 20px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: #6b6558; }
+  input[type=number], input[type=file], select { font-family: var(--mono); font-size: 13px; padding: 6px 8px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); }
+  input[type=number] { width: 80px; }
+  .loadfield { margin-left: auto; }
+  #count { font-family: var(--mono); font-size: 12px; margin-bottom: 10px; color: #6b6558; }
+  table { width: 100%; border-collapse: collapse; background: #fff; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 13px; text-align: left; vertical-align: top; }
+  th { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; cursor: pointer; background: var(--ink); color: var(--paper); user-select: none; white-space: nowrap; }
+  th:hover { background: var(--accent); }
+  th.active { background: var(--accent2); color: var(--ink); }
+  tr:hover td { background: #f0ede3; }
+  a { color: var(--accent); }
+  .price { font-family: var(--mono); font-weight: bold; }
+  .none { color: #b0a89a; font-style: italic; }
+  .empty { padding: 60px 20px; text-align: center; font-family: var(--mono); color: #6b6558; border: 1px dashed var(--line); }
+</style>
+</head>
+<body>
+
+<h1>Wishlist Price Finder</h1>
+<p class="sub">Load bgg_wishlist_prices.json — cheapest current UK listing per game</p>
+
+<div class="panel">
+  <div class="field loadfield">
+    <label>Data file</label>
+    <input type="file" id="fileInput" accept=".json">
+  </div>
+  <div class="field">
+    <label>Max price</label>
+    <input type="number" id="maxPrice" step="1" min="0" placeholder="e.g. 30">
+  </div>
+  <div class="field">
+    <label>Only show</label>
+    <select id="onlyAvailable">
+      <option value="all">All wishlist games</option>
+      <option value="available">Only games with a listing</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>Min wishlist priority</label>
+    <select id="minPriority">
+      <option value="">Any</option>
+      <option value="5">5 — Must have</option>
+      <option value="4">4+</option>
+      <option value="3">3+</option>
+      <option value="2">2+</option>
+      <option value="1">1+ (all)</option>
+    </select>
+  </div>
+</div>
+
+<div id="count"></div>
+<div id="tableWrap"></div>
+
+<script>
+let data = [];
+let sortKey = 'price_num';
+let sortDir = 1;
+
+const columns = [
+  { key: 'name', label: 'Game', render: r => `<a href="https://boardgamegeek.com/boardgame/${r.thing_id}" target="_blank">${r.name || '(unknown)'}</a>` },
+  { key: 'wishlist_priority', label: 'Priority', render: r => r.wishlist_priority ?? '—' },
+  { key: 'average_rating', label: 'Rating', render: r => r.average_rating != null ? r.average_rating.toFixed(2) : '—' },
+  { key: 'price_num', label: 'Best UK Price', render: r => r.cheapest_listing
+      ? `<span class="price">${r.cheapest_listing.price_raw}</span>`
+      : '<span class="none">no listings</span>' },
+  { key: 'condition', label: 'Condition', render: r => r.cheapest_listing?.condition ?? '—' },
+  { key: 'seller', label: 'Seller', render: r => r.cheapest_listing?.seller ?? '—' },
+  { key: 'listings_available', label: '# Listings', render: r => r.listings_available ?? 0 },
+  { key: 'listing_url', label: 'Listing', render: r => r.cheapest_listing
+      ? `<a href="${r.cheapest_listing.listing_url}" target="_blank">view</a>` : '—' },
+];
+
+function priceNum(r) {
+  if (!r.cheapest_listing) return null;
+  const m = String(r.cheapest_listing.price_raw).match(/[\d.,]+/);
+  return m ? parseFloat(m[0].replace(',', '')) : null;
+}
+
+document.getElementById('fileInput').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      data = JSON.parse(ev.target.result);
+      data.forEach(r => { r.price_num = priceNum(r); r.condition = r.cheapest_listing?.condition; r.seller = r.cheapest_listing?.seller; r.listing_url = r.cheapest_listing?.listing_url; });
+      render();
+    } catch (err) {
+      document.getElementById('tableWrap').innerHTML = `<div class="empty">Couldn't parse that file: ${err.message}</div>`;
+    }
+  };
+  reader.readAsText(file);
+});
+
+['maxPrice', 'onlyAvailable', 'minPriority'].forEach(id => {
+  document.getElementById(id).addEventListener('input', render);
+  document.getElementById(id).addEventListener('change', render);
+});
+
+function applyFilters(rows) {
+  const maxPrice = parseFloat(document.getElementById('maxPrice').value);
+  const onlyAvailable = document.getElementById('onlyAvailable').value === 'available';
+  const minPriority = parseFloat(document.getElementById('minPriority').value);
+
+  return rows.filter(r => {
+    if (onlyAvailable && !r.cheapest_listing) return false;
+    if (!isNaN(maxPrice) && (r.price_num == null || r.price_num > maxPrice)) return false;
+    if (!isNaN(minPriority) && (!r.wishlist_priority || parseFloat(r.wishlist_priority) < minPriority)) return false;
+    return true;
+  });
+}
+
+function render() {
+  const filtered = applyFilters(data);
+  filtered.sort((a, b) => {
+    let av = a[sortKey], bv = b[sortKey];
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (typeof av === 'string') return av.localeCompare(bv) * sortDir;
+    return (av - bv) * sortDir;
+  });
+
+  document.getElementById('count').textContent = `${filtered.length} of ${data.length} wishlist games`;
+
+  if (!data.length) {
+    document.getElementById('tableWrap').innerHTML = `<div class="empty">Load bgg_wishlist_prices.json to get started.</div>`;
+    return;
+  }
+
+  let html = '<table><thead><tr>';
+  for (const col of columns) {
+    html += `<th class="${col.key === sortKey ? 'active' : ''}" data-key="${col.key}">${col.label}</th>`;
+  }
+  html += '</tr></thead><tbody>';
+  for (const r of filtered) {
+    html += '<tr>' + columns.map(c => `<td>${c.render(r)}</td>`).join('') + '</tr>';
+  }
+  html += '</tbody></table>';
+  document.getElementById('tableWrap').innerHTML = html;
+
+  document.querySelectorAll('th[data-key]').forEach(th => {
+    th.addEventListener('click', () => {
+      const key = th.dataset.key;
+      if (sortKey === key) sortDir *= -1; else { sortKey = key; sortDir = 1; }
+      render();
+    });
+  });
+}
+
+render();
+</script>
+</body>
+</html>
