@@ -42,7 +42,7 @@ from playwright.sync_api import sync_playwright
 COLLECTION_URL = "https://boardgamegeek.com/xmlapi2/collection"
 MARKET_API_URL = "https://boardgamegeek.com/market"
 AUTH_STATE_FILE = "bgg_auth.json"
-LOGIN_COOKIE_NAMES = ("bggusername", "SessionID")
+LOGIN_COOKIE_NAMES = ("bggusername",)
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (personal script; BGG wishlist price checker)"}
 
