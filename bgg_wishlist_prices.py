@@ -406,9 +406,15 @@ def fetch_boardgameprices(thing_ids, sitename, currency="GBP", destination="GB",
         # A single BGG id ("eid") can map to multiple items (different
         # editions/versions — including different language editions). Skip
         # items that aren't the requested language, then aggregate offers
-        # per BGG id: prefer the cheapest offer that's actually in stock;
-        # only fall back to the cheapest overall (out-of-stock/pre-order/
-        # unknown) if nothing is in stock.
+        # per BGG id.
+        #
+        # Important: BGP aggregates offers from stores in multiple countries
+        # for the same edition. Offer-country preference and language/edition
+        # filtering are two separate concerns. We prefer offers from the
+        # requested destination country first (e.g. GB); only if there are no
+        # destination-country offers for that item do we fall back to offers
+        # from other countries. Within whichever offer set is chosen, prefer
+        # in-stock offers; otherwise pick the cheapest.
         by_thing_id = {}
         skipped_wrong_language = 0
         for item in data.get("items", []):
@@ -418,10 +424,22 @@ def fetch_boardgameprices(thing_ids, sitename, currency="GBP", destination="GB",
             if not _language_matches(_item_language(item), language):
                 skipped_wrong_language += 1
                 continue
-            for offer in item.get("prices", []):
-                price = offer.get("price")
-                if price is None:
+
+            # Partition offers into destination-country and other-country.
+            dest_offers = []
+            other_offers = []
+            for offer in item.get("prices", []) or []:
+                if offer.get("price") is None:
                     continue
+                if (offer.get("country") or "").upper() == destination.upper():
+                    dest_offers.append(offer)
+                else:
+                    other_offers.append(offer)
+            # Prefer destination-country offers; fall back only if none exist.
+            preferred_offers = dest_offers if dest_offers else other_offers
+
+            for offer in preferred_offers:
+                price = offer.get("price")
                 in_stock = offer.get("stock") == "Y"
                 candidate = {
                     "_price": float(price),
