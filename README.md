@@ -130,11 +130,16 @@ the Streamlit app needs Python running but has nicer input widgets.
 A more targeted tool: instead of browsing the whole marketplace, it pulls
 *your* BGG wishlist and checks current UK listings for just those specific
 games — good for "which of the games I actually want am I most likely to
-find cheap right now?"
+find cheap right now?" It checks two sources per game: BGG's own
+GeekMarket (secondhand listings from other collectors) and
+BoardGamePrices.co.uk (new-copy prices + stock status across ~280 UK
+online stores).
 
 ### `bgg_wishlist_prices.py`
 
 ```bash
+pip install playwright requests
+playwright install chromium
 python bgg_wishlist_prices.py --username YOUR_BGG_USERNAME --out bgg_wishlist_prices.json
 ```
 
@@ -147,12 +152,15 @@ script detects the moment you're logged in (by watching for BGG's session
 cookies) and saves that session to `bgg_auth.json` for reuse — future runs
 skip the login window entirely unless the saved session has expired.
 
-**No API token needed for this one.** BGG's own policy exempts downloading
-*your own collection* while logged in from the application-registration
-requirement — so the wishlist pull uses that authenticated browser session
-directly against the XML API2 collection endpoint, no token required. The
-per-game marketplace price lookups use the same public listings endpoint
-`bgg_market_scraper.py` uses, which also needs no token.
+**No API token needed for either data source.** BGG's own policy exempts
+downloading *your own collection* while logged in from the
+application-registration requirement — so the wishlist pull uses that
+authenticated browser session directly against the XML API2 collection
+endpoint, no token required. The per-game marketplace price lookups use the
+same public listings endpoint `bgg_market_scraper.py` uses. BoardGamePrices.co.uk's
+API (documented at https://boardgameprices.co.uk/api/plugin) is public and
+needs no auth at all — just their requested attribution and caching, both
+handled automatically (see below).
 
 **What it does:**
 1. Logs in (or reuses the saved session).
@@ -162,39 +170,61 @@ per-game marketplace price lookups use the same public listings endpoint
    weight, though; that data only comes from the `thing` endpoint, which
    does need the registered token — see note below).
 3. For each wishlisted game, loads the GB marketplace filtered to that one
-   game and finds the cheapest current listing, its seller, condition, and
-   how many total copies are listed.
-4. Writes one JSON file with all of it.
+   game and finds the cheapest current secondhand listing, its seller,
+   condition, and how many total copies are listed.
+4. Looks up each game on BoardGamePrices.co.uk for the cheapest current new
+   price (across all their tracked UK stores, including shipping) and
+   whether it's in stock, out of stock, or on pre-order.
+5. Writes one JSON file with all of it.
 
-This makes one page load per wishlist game, so a wishlist of 100 games
-takes a few minutes — there's a small delay between lookups by design, to
-stay polite to BGG's servers.
+This makes one page load per wishlist game for the GeekMarket lookup, so a
+wishlist of 100 games takes a few minutes — there's a small delay between
+lookups by design, to stay polite to BGG's servers. The BoardGamePrices
+lookups are much faster (batched, ~40 games per request).
+
+**BoardGamePrices.co.uk caching:** their API terms ask that results be
+cached for at least an hour before re-fetching — this script caches them
+in a local SQLite file (`bgp_cache.db`) for 24 hours by default, well above
+their minimum, so repeated runs on the same day reuse cached prices rather
+than hitting their API again.
 
 **CLI options:**
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--username` | *(required)* | Your BGG username |
-| `--country` | `GB` | Country to check listings for |
+| `--country` | `GB` | Country to check GeekMarket listings for |
 | `--out` | `bgg_wishlist_prices.json` | Output file |
 | `--auth-state` | `bgg_auth.json` | Where the saved login session is stored |
-| `--delay` | `1.0` | Seconds to wait between per-game marketplace lookups |
+| `--delay` | `1.0` | Seconds to wait between per-game GeekMarket lookups |
+| `--skip-boardgameprices` | off | Skip the BoardGamePrices.co.uk lookup entirely |
+| `--bgp-sitename` | `personal-bgg-wishlist-script` | Identifier sent to BoardGamePrices.co.uk's API (they ask for "a url to your site" — any identifying string works for a personal script) |
+| `--bgp-cache-db` | `bgp_cache.db` | SQLite file caching BoardGamePrices data |
+| `--bgp-refresh-hours` | `24` | Reuse cached BoardGamePrices data younger than this many hours |
 
 **Known limitation:** ratings shown here come from the collection
 endpoint, which doesn't include player count or weight — only
 `bgg_market_scraper.py`'s use of the `thing` endpoint (which needs the
-registered token) has those. If you get a token, the two datasets could be
-merged for a fuller wishlist view — ask if you want that wired in.
+registered token) has those. And BoardGamePrices.co.uk covers new-copy
+retail stock, not secondhand/private sellers — the two price columns in
+the viewer are genuinely different markets (new vs. secondhand), not
+duplicates of each other. If you get a BGG API token, the ratings dataset
+could also be extended with player count/weight — ask if you want that
+wired in.
 
 ### `bgg_wishlist_viewer.html`
 
 Same idea as the market viewer: open it, load
-`bgg_wishlist_prices.json`, get a sortable table. Filters for:
+`bgg_wishlist_prices.json`, get a sortable table with both price sources
+side by side. Filters for:
 - Maximum price
-- Only show games that currently have a UK listing at all
+- Only show games that currently have a GeekMarket listing at all
 - Minimum wishlist priority (BGG's 1–5 "must have" → "like it" scale)
+- BoardGamePrices stock status (show only in-stock items)
 
-Click "Best UK Price" to sort cheapest-first.
+Click either price column header to sort cheapest-first for that source.
+A footer link credits BoardGamePrices.co.uk, per their API's attribution
+requirement.
 
 ---
 

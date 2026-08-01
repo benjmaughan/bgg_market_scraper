@@ -29,8 +29,13 @@
   tr:hover td { background: #f0ede3; }
   a { color: var(--accent); }
   .price { font-family: var(--mono); font-weight: bold; }
+  .subtext { font-family: var(--mono); font-size: 11px; color: #6b6558; }
   .none { color: #b0a89a; font-style: italic; }
+  .stock-yes { color: #4a6b2a; font-weight: bold; }
+  .stock-no { color: #a04030; }
   .empty { padding: 60px 20px; text-align: center; font-family: var(--mono); color: #6b6558; border: 1px dashed var(--line); }
+  .attribution { margin-top: 24px; font-family: var(--mono); font-size: 11px; color: #6b6558; text-align: center; }
+  .attribution a { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -65,10 +70,19 @@
       <option value="1">1+ (all)</option>
     </select>
   </div>
+  <div class="field">
+    <label>BoardGamePrices stock</label>
+    <select id="stockFilter">
+      <option value="any">Any</option>
+      <option value="Y">In stock only</option>
+    </select>
+  </div>
 </div>
 
 <div id="count"></div>
 <div id="tableWrap"></div>
+
+<p class="attribution">Price and stock data from <a href="https://boardgameprices.co.uk/" target="_blank">BoardGamePrices.co.uk</a></p>
 
 <script>
 let data = [];
@@ -79,19 +93,45 @@ const columns = [
   { key: 'name', label: 'Game', render: r => `<a href="https://boardgamegeek.com/boardgame/${r.thing_id}" target="_blank">${r.name || '(unknown)'}</a>` },
   { key: 'wishlist_priority', label: 'Priority', render: r => r.wishlist_priority ?? '—' },
   { key: 'average_rating', label: 'Rating', render: r => r.average_rating != null ? r.average_rating.toFixed(2) : '—' },
-  { key: 'price_num', label: 'Best UK Price', render: r => r.cheapest_listing
+  { key: 'price_num', label: 'Best UK Price (GeekMarket)', render: r => r.cheapest_listing
       ? `<span class="price">${r.cheapest_listing.price_raw}</span>`
       : '<span class="none">no listings</span>' },
   { key: 'condition', label: 'Condition', render: r => r.cheapest_listing?.condition ?? '—' },
   { key: 'seller', label: 'Seller', render: r => r.cheapest_listing?.seller ?? '—' },
   { key: 'listings_available', label: '# Listings', render: r => r.listings_available ?? 0 },
-  { key: 'listing_url', label: 'Listing', render: r => r.cheapest_listing
+  { key: 'listing_url', label: 'GeekMarket', render: r => r.cheapest_listing
       ? `<a href="${r.cheapest_listing.listing_url}" target="_blank">view</a>` : '—' },
+  { key: 'bgp_price_num', label: 'Best Price (BoardGamePrices)', render: r => {
+      const b = r.boardgameprices;
+      if (!b || !b.price_raw) return '<span class="none">not found</span>';
+      let sub = '';
+      if (b.product_price_raw) {
+        sub = b.shipping_known
+          ? `${b.product_price_raw} + ${b.shipping_raw} shipping`
+          : `${b.product_price_raw} + shipping unknown`;
+      }
+      return `<span class="price">${b.price_raw}</span>` + (sub ? `<br><span class="subtext">${sub}</span>` : '');
+  } },
+  { key: 'bgp_stock', label: 'Stock', render: r => {
+      const s = r.boardgameprices?.stock;
+      if (s === 'Y') return '<span class="stock-yes">in stock</span>';
+      if (s === 'N') return '<span class="stock-no">out of stock</span>';
+      if (s === 'P') return 'pre-order';
+      return '—';
+  } },
+  { key: 'bgp_link', label: 'BoardGamePrices', render: r => r.boardgameprices?.item_url
+      ? `<a href="${r.boardgameprices.item_url}" target="_blank">view</a>` : '—' },
 ];
 
 function priceNum(r) {
   if (!r.cheapest_listing) return null;
   const m = String(r.cheapest_listing.price_raw).match(/[\d.,]+/);
+  return m ? parseFloat(m[0].replace(',', '')) : null;
+}
+
+function bgpPriceNum(r) {
+  if (!r.boardgameprices || !r.boardgameprices.price_raw) return null;
+  const m = String(r.boardgameprices.price_raw).match(/[\d.,]+/);
   return m ? parseFloat(m[0].replace(',', '')) : null;
 }
 
@@ -102,7 +142,15 @@ document.getElementById('fileInput').addEventListener('change', e => {
   reader.onload = ev => {
     try {
       data = JSON.parse(ev.target.result);
-      data.forEach(r => { r.price_num = priceNum(r); r.condition = r.cheapest_listing?.condition; r.seller = r.cheapest_listing?.seller; r.listing_url = r.cheapest_listing?.listing_url; });
+      data.forEach(r => {
+        r.price_num = priceNum(r);
+        r.condition = r.cheapest_listing?.condition;
+        r.seller = r.cheapest_listing?.seller;
+        r.listing_url = r.cheapest_listing?.listing_url;
+        r.bgp_price_num = bgpPriceNum(r);
+        r.bgp_stock = r.boardgameprices?.stock;
+        r.bgp_link = r.boardgameprices?.item_url;
+      });
       render();
     } catch (err) {
       document.getElementById('tableWrap').innerHTML = `<div class="empty">Couldn't parse that file: ${err.message}</div>`;
@@ -111,7 +159,7 @@ document.getElementById('fileInput').addEventListener('change', e => {
   reader.readAsText(file);
 });
 
-['maxPrice', 'onlyAvailable', 'minPriority'].forEach(id => {
+['maxPrice', 'onlyAvailable', 'minPriority', 'stockFilter'].forEach(id => {
   document.getElementById(id).addEventListener('input', render);
   document.getElementById(id).addEventListener('change', render);
 });
@@ -120,11 +168,13 @@ function applyFilters(rows) {
   const maxPrice = parseFloat(document.getElementById('maxPrice').value);
   const onlyAvailable = document.getElementById('onlyAvailable').value === 'available';
   const minPriority = parseFloat(document.getElementById('minPriority').value);
+  const stockFilter = document.getElementById('stockFilter').value;
 
   return rows.filter(r => {
     if (onlyAvailable && !r.cheapest_listing) return false;
     if (!isNaN(maxPrice) && (r.price_num == null || r.price_num > maxPrice)) return false;
     if (!isNaN(minPriority) && (!r.wishlist_priority || parseFloat(r.wishlist_priority) < minPriority)) return false;
+    if (stockFilter === 'Y' && r.bgp_stock !== 'Y') return false;
     return true;
   });
 }
