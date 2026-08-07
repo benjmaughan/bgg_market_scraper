@@ -45,10 +45,16 @@ Setup:
 
 Usage:
     python bgg_wishlist_prices.py --username YOUR_BGG_USERNAME --out bgg_wishlist_prices.json
+
+    # To view results on your phone via Google Drive/iCloud Drive/Dropbox
+    # instead of connecting to this machine over the network, add:
+    python bgg_wishlist_prices.py --username YOUR_BGG_USERNAME \\
+        --sync-dir "~/Google Drive/My Drive/bgg"
 """
 
 import argparse
 import json
+import shutil
 import sqlite3
 import time
 import xml.etree.ElementTree as ET
@@ -520,6 +526,11 @@ def main():
     ap.add_argument("--bgp-dump-json", action="store_true",
                     help="Save one raw BoardGamePrices API response to bgp_api_sample.json "
                          "(useful for checking the actual 'lang' value format)")
+    ap.add_argument("--sync-dir", default=None,
+                    help="After writing results, also copy the output JSON and viewer HTML into this folder "
+                         "(e.g. a Google Drive / iCloud Drive / Dropbox synced folder) so they show up on "
+                         "other devices automatically — no server or network access to this machine needed "
+                         "to view them.")
     args = ap.parse_args()
 
     wishlist_refresh_hours = 0 if args.force_refresh else args.wishlist_refresh_hours
@@ -601,7 +612,20 @@ def main():
     print(f"  {found} have at least one {args.country} GeekMarket listing right now")
     if not args.skip_boardgameprices:
         print(f"  {bgp_found} have a BoardGamePrices.co.uk price found")
-    print("Open bgg_wishlist_viewer.html and load this file to browse it.")
+
+    if args.sync_dir:
+        sync_dir = Path(args.sync_dir).expanduser()
+        sync_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(args.out, sync_dir / "bgg_wishlist_prices.json")
+        viewer_src = Path(__file__).parent / "bgg_wishlist_viewer.html"
+        if viewer_src.exists():
+            shutil.copy2(viewer_src, sync_dir / "bgg_wishlist_viewer.html")
+        else:
+            print(f"  note: couldn't find bgg_wishlist_viewer.html next to this script to copy — "
+                  f"copy it into {sync_dir} manually (only needs doing once, it rarely changes).")
+        print(f"  synced to {sync_dir} — should appear on your other devices shortly.")
+    else:
+        print("Open bgg_wishlist_viewer.html and load this file to browse it.")
 
 
 if __name__ == "__main__":
